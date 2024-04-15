@@ -6,9 +6,9 @@ from torchvision.transforms import v2
 from mamba import MambaLMHeadModel, MambaConfig
 from datasets import load_dataset
 
-input_dim = 384
+input_dim = 256
 num_layers = 6
-batch_size = 32
+batch_size = 128
 
 dropout = 0.0
 max_lr = 5e-4

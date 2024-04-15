@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 from mamba_ssm.models.config_mamba import MambaConfig
-from mamba_ssm.modules.mamba_simple import Mamba, Block
+from mamba_block import Mamba, Block
 from mamba_ssm.utils.generation import GenerationMixin
 from mamba_ssm.utils.hf import load_config_hf, load_state_dict_hf
 
@@ -116,7 +116,7 @@ class MixerModel(nn.Module):
         super().__init__()
         self.residual_in_fp32 = residual_in_fp32
 
-        self.embedding = nn.Linear(3, d_model, bias=False, **factory_kwargs)
+        # self.embedding = nn.Linear(3, d_model, bias=False, **factory_kwargs)
 
         # We change the order of residual and layer norm:
         # Instead of LN -> Attn / MLP -> Add, we do:
@@ -167,7 +167,7 @@ class MixerModel(nn.Module):
 
         input_ids = input_ids.view(b, c, h*w)
         input_ids = input_ids.transpose(1, 2)
-        hidden_states = self.embedding(input_ids)
+        hidden_states = input_ids
         residual = None
         for layer in self.layers:
             hidden_states, residual = layer(
@@ -212,6 +212,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
 
         super().__init__()
 
+        self.conv = nn.Conv2d(3, d_model, 2, 2, bias=False)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -242,15 +243,16 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.backbone.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
-    def forward(self, input_ids, position_ids=None, inference_params=None, num_last_tokens=0):
+    def forward(self, input_ids, position_ids=None, inference_params=None):
         """
         "position_ids" is just to be compatible with Transformer generation. We don't use it.
-        num_last_tokens: if > 0, only return the logits for the last n tokens
         input_ids: b, h, w, 3
         """
+        # print(input_ids.size())
+        input_ids = self.conv(input_ids)
+        # print(input_ids.size())
         hidden_states = self.backbone(input_ids, inference_params=inference_params)
-        if num_last_tokens > 0:
-            hidden_states = hidden_states[:, -num_last_tokens:]
+
 
         hidden_states = hidden_states.mean(1)
         lm_logits = self.lm_head(hidden_states)
