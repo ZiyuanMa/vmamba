@@ -7,12 +7,12 @@ from mamba import MambaLMHeadModel, MambaConfig
 from datasets import load_dataset
 
 input_dim = 256
-num_layers = 6
-batch_size = 128
+num_layers = 8
+batch_size = 64
 
 dropout = 0.0
-max_lr = 5e-4
-wd = 0.2
+max_lr = 1e-3
+wd = 0.05
 path = './'
 epoches = 100
 warmup_steps = 20000
@@ -24,7 +24,9 @@ transforms = v2.Compose([
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
-
+cutmix = v2.CutMix(num_classes=200)
+mixup = v2.MixUp(num_classes=200)
+cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
 class DataSet(torch.utils.data.Dataset):
     def __init__(self, data):
         super().__init__()
@@ -135,7 +137,7 @@ for i in range(epoches):
         
         img = img.cuda()
         label = label.cuda()
-
+        img, label = cutmix_or_mixup(img, label)
         batch_loss = 0
         model.train()
         # for mini_data in data.chunk(num_mini_batches, 0):
@@ -207,7 +209,3 @@ for i in range(epoches):
         print(avg_loss)
         best_loss = avg_loss
         torch.save(model.state_dict(), path+'/runs/'+test_name+'/best_model.pt')
-
-    
-
-

@@ -26,7 +26,7 @@ try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
-
+import config
 
 class Mamba(nn.Module):
     def __init__(
@@ -34,7 +34,7 @@ class Mamba(nn.Module):
         d_model,
         d_state=16,
         d_conv=4,
-        expand=2,
+        expand=4,
         dt_rank="auto",
         dt_min=0.001,
         dt_max=0.1,
@@ -314,7 +314,12 @@ class Block(nn.Module):
         self.residual_in_fp32 = residual_in_fp32
         self.fused_add_norm = fused_add_norm
         self.mixer1 = mixer_cls(dim)
-        self.mixer2 = mixer_cls(dim)
+
+        if config.ssm_direction == 'single':
+            self.mixer2 = None
+        elif config.ssm_direction == 'double':
+            self.mixer2 = mixer_cls(dim)
+
         self.norm = norm_cls(dim)
         if self.fused_add_norm:
             assert RMSNorm is not None, "RMSNorm import fails"
@@ -349,8 +354,11 @@ class Block(nn.Module):
             )
         # print(hidden_states.size())
         hidden_states1 = self.mixer1(hidden_states, inference_params=inference_params)
-        hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
-        hidden_states = hidden_states1 + hidden_states2
+        if self.mixer2 is not None:
+            hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
+            hidden_states = hidden_states1 + hidden_states2
+        else:
+            hidden_states = hidden_states1
         return hidden_states, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):

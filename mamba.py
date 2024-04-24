@@ -21,7 +21,7 @@ except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
 
 from dataclasses import dataclass, field
-
+import config
 
 @dataclass
 class MambaConfig:
@@ -162,12 +162,17 @@ class MixerModel(nn.Module):
             for i, layer in enumerate(self.layers)
         }
 
-    def forward(self, input_ids, inference_params=None):
-        b, c, h, w = input_ids.size()
+    def forward(self, input_patches, inference_params=None):
+        b, c, h, w = input_patches.size()
+        
+        # flip rows
+        if config.flip_rows:
+            row_idx = torch.arange(h//2, device=input_patches.device) * 2 + 1
+            input_patches[:, :, row_idx] = torch.flip(input_patches[:, :, row_idx], dims=[2])
 
-        input_ids = input_ids.view(b, c, h*w)
-        input_ids = input_ids.transpose(1, 2)
-        hidden_states = input_ids
+        input_patches = input_patches.view(b, c, h*w)
+        input_patches = input_patches.transpose(1, 2)
+        hidden_states = input_patches
         residual = None
         for layer in self.layers:
             hidden_states, residual = layer(
@@ -234,27 +239,25 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
                 **(initializer_cfg if initializer_cfg is not None else {}),
             )
         )
-    #     self.tie_weights()
-
-    # def tie_weights(self):
-    #     if self.config.tie_embeddings:
-    #         self.lm_head.weight = self.backbone.embedding.weight
     
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
         return self.backbone.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
-    def forward(self, input_ids, position_ids=None, inference_params=None):
+    def forward(self, input_img, inference_params=None, class_token='last'):
         """
-        "position_ids" is just to be compatible with Transformer generation. We don't use it.
-        input_ids: b, h, w, 3
+        input_img: b, 3, h, w
         """
-        # print(input_ids.size())
-        input_ids = self.conv(input_ids)
-        # print(input_ids.size())
-        hidden_states = self.backbone(input_ids, inference_params=inference_params)
 
+        input_patches = self.conv(input_img)
 
-        hidden_states = hidden_states.mean(1)
+        hidden_states = self.backbone(input_patches, inference_params=inference_params)
+
+        if config.class_token == 'last':
+            hidden_states = hidden_states.mean(1)
+        elif  config.class_token == 'mean':
+            hidden_states = hidden_states.mean(1)
+        else:
+            raise NotImplementedError
         lm_logits = self.lm_head(hidden_states)
         CausalLMOutput = namedtuple("CausalLMOutput", ["logits"])
         return CausalLMOutput(logits=lm_logits)
