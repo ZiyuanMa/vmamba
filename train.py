@@ -4,11 +4,13 @@ import torch
 from torch.nn import functional as F
 from torchvision.transforms import v2
 from mamba import MambaLMHeadModel, MambaConfig
+from cnn import Model
 from datasets import load_dataset
+import config
 
 input_dim = 256
 num_layers = 8
-batch_size = 64
+batch_size = 128
 
 dropout = 0.0
 max_lr = 1e-3
@@ -19,42 +21,74 @@ warmup_steps = 20000
 
 transforms = v2.Compose([
     v2.PILToTensor(),
-    # v2.RandomResizedCrop(size=(64, 64), antialias=True),
+    v2.RandomResizedCrop(32, scale=(0.7, 1)),
     v2.RandomHorizontalFlip(p=0.5),
     v2.ToDtype(torch.float32, scale=True),
-    v2.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    v2.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276]),
+    # v2.Normalize(mean=[0.478], std=[0.268]),
+    # v2.RandomErasing(),
+    # v2.RandAugment(),
 ])
-cutmix = v2.CutMix(num_classes=200)
-mixup = v2.MixUp(num_classes=200)
+
+eval_transforms = v2.Compose([
+    v2.PILToTensor(),
+    v2.ToDtype(torch.float32, scale=True),
+    v2.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276]),
+
+])
+cutmix = v2.CutMix(num_classes=config.num_classes)
+mixup = v2.MixUp(num_classes=config.num_classes)
 cutmix_or_mixup = v2.RandomChoice([cutmix, mixup])
 class DataSet(torch.utils.data.Dataset):
-    def __init__(self, data):
+    def __init__(self, images, labels, trans):
         super().__init__()
 
         self.imgs = []
         self.labels = []
-
-        for img, label in zip(data['image'], data['label']):
+        self.trans = trans
+        # for img, label in zip(data['image'], data['label']):
+        for img, label in zip(images, labels):
             if len(np.array(img).shape) == 3:
                 self.imgs.append(img)
                 self.labels.append(label)
 
-        print(len(self.imgs))
+        # temp_image = [eval_transforms(img) for img in self.imgs]
+        # temp_image = torch.stack(temp_image)
+        # print(temp_image.size())
+        # std0, mean0 = torch.std_mean(temp_image[:, 0])
+        # std1, mean1 = torch.std_mean(temp_image[:, 1])
+        # std2, mean2 = torch.std_mean(temp_image[:, 2])
+
+
+        # print(std0)
+        # print(mean0)
+        # print(std1)
+        # print(mean1)
+        # print(std2)
+        # print(mean2)
     def __getitem__(self, i):
 
-        return transforms(self.imgs[i]), self.labels[i]
+        return self.trans(self.imgs[i]), self.labels[i]
     
     def __len__(self):
         return len(self.imgs)
     
 def load_data(path):
-    dataset = load_dataset("zh-plus/tiny-imagenet")
-    # print(dataset['train']['image'])
-    train_data = dataset['train']
-    valid_data = dataset['valid']
+    if config.dataset == 'cifar100':
+        dataset = load_dataset("cifar100")
+        train_data = dataset['train']
+        valid_data = dataset['test']
+        train_img, train_label = train_data['img'], train_data['fine_label']
+        valid_img, valid_label = valid_data['img'], valid_data['fine_label']
+    elif config.dataset == 'tiny-imagenet':
+        dataset = load_dataset("zh-plus/tiny-imagenet")
+        train_data = dataset['train']
+        valid_data = dataset['valid']
+        train_img, train_label = train_data['image'], train_data['label']
+        valid_img, valid_label = valid_data['image'], valid_data['label']
 
-    train_dataset = DataSet(train_data)
-    valid_dataset = DataSet(valid_data)
+    train_dataset = DataSet(train_img, train_label, transforms)
+    valid_dataset = DataSet(valid_img, valid_label, eval_transforms)
 
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True, num_workers=4)
     valid_dataloader = torch.utils.data.DataLoader(valid_dataset, batch_size=batch_size, pin_memory=True, num_workers=4)
@@ -75,6 +109,7 @@ train_dataloader, valid_dataloader, total_train_steps = load_data(path)
 
 
 model = MambaLMHeadModel(MambaConfig(input_dim, num_layers)).cuda()
+# model = Model(input_dim, num_layers).cuda()
 # model = origin_model
 
     # model = origin_model
@@ -107,7 +142,7 @@ def group_weight(module):
 
 
 weights = group_weight(model)
-optimizer = torch.optim.AdamW(weights, lr=max_lr, weight_decay=wd, betas=(0.9, 0.98))
+optimizer = torch.optim.AdamW(weights, lr=max_lr, weight_decay=wd)
 # optimizer = torch.optim.AdamW(model.parameters(), lr=max_lr, weight_decay=wd, betas=(0.9, 0.98))
 
 scheduler1 = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.01, end_factor=1.0, total_iters=warmup_steps)
@@ -119,7 +154,7 @@ import math
 
 from torch.utils.tensorboard import SummaryWriter
 
-test_name = 'mamba'
+test_name = f"{config.dataset}_mamba4"
 writer = SummaryWriter(path+'/runs/'+test_name, max_queue=120)
 
 scaler = torch.cuda.amp.GradScaler()
@@ -143,9 +178,8 @@ for i in range(epoches):
         # for mini_data in data.chunk(num_mini_batches, 0):
         with torch.autocast(device_type="cuda"):
             output = model(img)
-            output = output.logits
             final_output = torch.reshape(output, (-1, output.shape[-1]))
-            loss = F.cross_entropy(final_output, label) 
+            loss = F.cross_entropy(final_output, label, label_smoothing=0.1) 
 
         batch_loss += loss.item()
 
@@ -180,10 +214,7 @@ for i in range(epoches):
         label = label.cuda()
         with torch.inference_mode(), torch.autocast(device_type="cuda"):
             
-            output = model(img)
-            output = output.logits
-            # final_output = torch.reshape(output, (-1, output.shape[-1]))
-            
+            output = model(img)  
             final_target = torch.reshape(label, (-1,))
             loss = F.cross_entropy(output, final_target, reduction='none')
 
@@ -209,3 +240,4 @@ for i in range(epoches):
         print(avg_loss)
         best_loss = avg_loss
         torch.save(model.state_dict(), path+'/runs/'+test_name+'/best_model.pt')
+

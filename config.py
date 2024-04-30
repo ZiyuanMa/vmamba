@@ -1,3 +1,5 @@
-ssm_direction = 'single'
-flip_rows = 'True'
-class_token = 'last'
+ssm_direction = 'quadruple'
+flip_rows = 'False'
+class_token = 'mean'
+dataset = 'cifar100' #'tiny-imagenet'
+num_classes = 100

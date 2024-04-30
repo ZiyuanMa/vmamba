@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-
+import torchvision
 from einops import rearrange, repeat
 
 from mamba_ssm.ops.selective_scan_interface import selective_scan_fn, mamba_inner_fn
@@ -34,7 +34,7 @@ class Mamba(nn.Module):
         d_model,
         d_state=16,
         d_conv=4,
-        expand=4,
+        expand=1,
         dt_rank="auto",
         dt_min=0.001,
         dt_max=0.1,
@@ -319,6 +319,10 @@ class Block(nn.Module):
             self.mixer2 = None
         elif config.ssm_direction == 'double':
             self.mixer2 = mixer_cls(dim)
+        elif config.ssm_direction == 'quadruple':
+            self.mixer2 = mixer_cls(dim)
+            self.mixer3 = mixer_cls(dim)
+            self.mixer4 = mixer_cls(dim)
 
         self.norm = norm_cls(dim)
         if self.fused_add_norm:
@@ -354,11 +358,23 @@ class Block(nn.Module):
             )
         # print(hidden_states.size())
         hidden_states1 = self.mixer1(hidden_states, inference_params=inference_params)
-        if self.mixer2 is not None:
+        if config.ssm_direction == 'quadruple':
+            side = int(hidden_states.size(1)**0.5)
+
+            hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
+            side = int(hidden_states.size(1)**0.5)
+            b = hidden_states.size(0)
+            h = hidden_states.size(2)
+            hidden_states_rotate = hidden_states.view(b, side, side, h).transpose(1, 2).reshape(b, side*side, h)
+            hidden_states3 = self.mixer3(hidden_states_rotate, inference_params=inference_params)
+            hidden_states4 = self.mixer4(hidden_states_rotate.flip(1), inference_params=inference_params)
+            hidden_states = hidden_states1 + hidden_states2 + hidden_states3 + hidden_states4
+        elif self.mixer2 is not None:
             hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
             hidden_states = hidden_states1 + hidden_states2
         else:
             hidden_states = hidden_states1
+        # hidden_states = torchvision.ops.stochastic_depth(hidden_states, 0.1, 'batch', training=self.training)
         return hidden_states, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):

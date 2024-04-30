@@ -28,7 +28,7 @@ class MambaConfig:
 
     d_model: int = 512
     n_layer: int = 12
-    vocab_size: int = 200
+    vocab_size: int = config.num_classes
     ssm_cfg: dict = field(default_factory=dict)
     rms_norm: bool = True
     residual_in_fp32: bool = True
@@ -217,7 +217,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
 
         super().__init__()
 
-        self.conv = nn.Conv2d(3, d_model, 2, 2, bias=False)
+        self.conv = nn.Conv2d(3, d_model, 4, 4, bias=False)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -259,8 +259,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
         else:
             raise NotImplementedError
         lm_logits = self.lm_head(hidden_states)
-        CausalLMOutput = namedtuple("CausalLMOutput", ["logits"])
-        return CausalLMOutput(logits=lm_logits)
+        return lm_logits
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name, device=None, dtype=None, **kwargs):
