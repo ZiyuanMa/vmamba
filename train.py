@@ -8,21 +8,22 @@ from cnn import Model
 from datasets import load_dataset
 import config
 
-input_dim = 256
+input_dim = 128
 num_layers = 8
-batch_size = 128
+batch_size = 256
 
 dropout = 0.0
 max_lr = 1e-3
 wd = 0.05
 path = './'
-epoches = 100
-warmup_steps = 20000
+epoches = config.num_epoches
+warmup_steps = 2000
 
 transforms = v2.Compose([
     v2.PILToTensor(),
     v2.RandomResizedCrop(32, scale=(0.7, 1)),
     v2.RandomHorizontalFlip(p=0.5),
+    # v2.RandomRotation(15),
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276]),
     # v2.Normalize(mean=[0.478], std=[0.268]),
@@ -154,7 +155,8 @@ import math
 
 from torch.utils.tensorboard import SummaryWriter
 
-test_name = f"{config.dataset}_mamba4"
+test_name = f"{config.dataset}_mamba_{config.num_epoches}_direction:{config.ssm_direction}"
+# test_name = 'cnn_4_stage'
 writer = SummaryWriter(path+'/runs/'+test_name, max_queue=120)
 
 scaler = torch.cuda.amp.GradScaler()

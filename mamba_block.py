@@ -34,7 +34,7 @@ class Mamba(nn.Module):
         d_model,
         d_state=16,
         d_conv=4,
-        expand=1,
+        expand=4,
         dt_rank="auto",
         dt_min=0.001,
         dt_max=0.1,
@@ -357,23 +357,39 @@ class Block(nn.Module):
                 eps=self.norm.eps,
             )
         # print(hidden_states.size())
-        hidden_states1 = self.mixer1(hidden_states, inference_params=inference_params)
-        if config.ssm_direction == 'quadruple':
-            side = int(hidden_states.size(1)**0.5)
+        b, s, h = hidden_states.size()
+        side = int(s**0.5)
+        # hidden_states = hidden_states.flip(1)
 
-            hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
-            side = int(hidden_states.size(1)**0.5)
-            b = hidden_states.size(0)
-            h = hidden_states.size(2)
-            hidden_states_rotate = hidden_states.view(b, side, side, h).transpose(1, 2).reshape(b, side*side, h)
-            hidden_states3 = self.mixer3(hidden_states_rotate, inference_params=inference_params)
-            hidden_states4 = self.mixer4(hidden_states_rotate.flip(1), inference_params=inference_params)
-            hidden_states = hidden_states1 + hidden_states2 + hidden_states3 + hidden_states4
-        elif self.mixer2 is not None:
-            hidden_states2 = self.mixer2(hidden_states.flip(1), inference_params=inference_params)
-            hidden_states = hidden_states1 + hidden_states2
+        if config.flip_seq:
+            row_hidden_states = hidden_states.view(b, side, side, h).transpose(0, 1)
+            row_hidden_states = torch.stack([row_hidden_state.flip(1) if i % 2 == 1 else row_hidden_state for i, row_hidden_state in enumerate(row_hidden_states)], 1)
+            row_hidden_states = row_hidden_states.reshape(b, s, h)
+
+            col_hidden_states = hidden_states.view(b, side, side, h).transpose(1, 2).transpose(0, 1)
+            col_hidden_states = torch.stack([col_hidden_state.flip(1) if i % 2 == 1 else col_hidden_state for i, col_hidden_state in enumerate(col_hidden_states)], 1)
+            col_hidden_states = col_hidden_states.reshape(b, s, h)
         else:
-            hidden_states = hidden_states1
+            row_hidden_states = hidden_states
+            col_hidden_states = hidden_states.view(b, side, side, h).transpose(1, 2).reshape(b, s, h)
+
+        if config.ssm_direction == 'quadruple':
+            hidden_states1 = self.mixer1(row_hidden_states, inference_params=inference_params)
+            hidden_states2 = self.mixer2(row_hidden_states.flip(1), inference_params=inference_params)
+            hidden_states3 = self.mixer3(col_hidden_states, inference_params=inference_params)
+            hidden_states4 = self.mixer4(col_hidden_states.flip(1), inference_params=inference_params)
+            hidden_states = hidden_states1 + hidden_states2 + hidden_states3 + hidden_states4
+
+        elif config.ssm_direction == 'double':
+            hidden_states1 = self.mixer1(row_hidden_states, inference_params=inference_params)
+            hidden_states2 = self.mixer2(col_hidden_states, inference_params=inference_params)
+            hidden_states = hidden_states1 + hidden_states2
+
+        elif config.ssm_direction == 'single':
+            hidden_states = self.mixer1(row_hidden_states, inference_params=inference_params)
+
+        else:
+            raise NotImplementedError
         # hidden_states = torchvision.ops.stochastic_depth(hidden_states, 0.1, 'batch', training=self.training)
         return hidden_states, residual
 

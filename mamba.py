@@ -166,9 +166,9 @@ class MixerModel(nn.Module):
         b, c, h, w = input_patches.size()
         
         # flip rows
-        if config.flip_rows:
-            row_idx = torch.arange(h//2, device=input_patches.device) * 2 + 1
-            input_patches[:, :, row_idx] = torch.flip(input_patches[:, :, row_idx], dims=[2])
+        # if config.flip_rows:
+        #     row_idx = torch.arange(h//2, device=input_patches.device) * 2 + 1
+        #     input_patches[:, :, row_idx] = torch.flip(input_patches[:, :, row_idx], dims=[2])
 
         input_patches = input_patches.view(b, c, h*w)
         input_patches = input_patches.transpose(1, 2)
@@ -217,7 +217,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
 
         super().__init__()
 
-        self.conv = nn.Conv2d(3, d_model, 4, 4, bias=False)
+        self.conv = nn.Conv2d(3, d_model, 2, 2, bias=False)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -253,7 +253,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
         hidden_states = self.backbone(input_patches, inference_params=inference_params)
 
         if config.class_token == 'last':
-            hidden_states = hidden_states.mean(1)
+            hidden_states = hidden_states[:, -1]
         elif  config.class_token == 'mean':
             hidden_states = hidden_states.mean(1)
         else:
