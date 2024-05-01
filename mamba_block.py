@@ -361,17 +361,8 @@ class Block(nn.Module):
         side = int(s**0.5)
         # hidden_states = hidden_states.flip(1)
 
-        if config.flip_seq:
-            row_hidden_states = hidden_states.view(b, side, side, h).transpose(0, 1)
-            row_hidden_states = torch.stack([row_hidden_state.flip(1) if i % 2 == 1 else row_hidden_state for i, row_hidden_state in enumerate(row_hidden_states)], 1)
-            row_hidden_states = row_hidden_states.reshape(b, s, h)
-
-            col_hidden_states = hidden_states.view(b, side, side, h).transpose(1, 2).transpose(0, 1)
-            col_hidden_states = torch.stack([col_hidden_state.flip(1) if i % 2 == 1 else col_hidden_state for i, col_hidden_state in enumerate(col_hidden_states)], 1)
-            col_hidden_states = col_hidden_states.reshape(b, s, h)
-        else:
-            row_hidden_states = hidden_states
-            col_hidden_states = hidden_states.view(b, side, side, h).transpose(1, 2).reshape(b, s, h)
+        row_hidden_states = hidden_states
+        col_hidden_states = hidden_states.view(b, side, side, h).transpose(1, 2).reshape(b, s, h)
 
         if config.ssm_direction == 'quadruple':
             hidden_states1 = self.mixer1(row_hidden_states, inference_params=inference_params)
