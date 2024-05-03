@@ -8,7 +8,7 @@ from cnn import Model
 from datasets import load_dataset
 import config
 
-input_dim = 128
+input_dim = 64
 num_layers = 8
 batch_size = 256
 
@@ -23,7 +23,7 @@ transforms = v2.Compose([
     v2.PILToTensor(),
     v2.RandomResizedCrop(32, scale=(0.7, 1)),
     v2.RandomHorizontalFlip(p=0.5),
-    # v2.RandomRotation(15),
+    v2.RandomRotation(5),
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize(mean=[0.507, 0.487, 0.441], std=[0.267, 0.256, 0.276]),
     # v2.Normalize(mean=[0.478], std=[0.268]),
@@ -155,7 +155,7 @@ import math
 
 from torch.utils.tensorboard import SummaryWriter
 
-test_name = f"{config.dataset}_mamba_{config.num_epoches}_direction:{config.ssm_direction}"
+test_name = f"mamba_direction:{config.ssm_direction}_3_stages_rotate"
 # test_name = 'cnn_4_stage'
 writer = SummaryWriter(path+'/runs/'+test_name, max_queue=120)
 

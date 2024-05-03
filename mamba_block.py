@@ -32,9 +32,9 @@ class Mamba(nn.Module):
     def __init__(
         self,
         d_model,
-        d_state=16,
+        d_state=8,
         d_conv=4,
-        expand=4,
+        expand=2,
         dt_rank="auto",
         dt_min=0.001,
         dt_max=0.1,
@@ -325,6 +325,7 @@ class Block(nn.Module):
             self.mixer4 = mixer_cls(dim)
 
         self.norm = norm_cls(dim)
+
         if self.fused_add_norm:
             assert RMSNorm is not None, "RMSNorm import fails"
             assert isinstance(
@@ -382,6 +383,7 @@ class Block(nn.Module):
         else:
             raise NotImplementedError
         # hidden_states = torchvision.ops.stochastic_depth(hidden_states, 0.1, 'batch', training=self.training)
+
         return hidden_states, residual
 
     def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):

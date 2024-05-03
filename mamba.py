@@ -34,7 +34,27 @@ class MambaConfig:
     residual_in_fp32: bool = True
     fused_add_norm: bool = True
 
+
+class DownSample(nn.Module):
+    def __init__(self, input_dim, output_dim) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(input_dim, output_dim, 2, 2, bias=False)
+        self.norm = RMSNorm(input_dim)
+
+    def forward(self, x, res, inference_params):
+        b, s, c = x.size()
+        # x = x.transpose(1, 3)
+        x = x + res
+        x = self.norm(x)
+        # x = x.transpose(1, 3)
+        side = int(math.sqrt(x.size(1)))
+        x = x.view(b, side, side, c).transpose(1, 3)
+        x = self.conv(x)
+        x = x.transpose(1, 3).reshape(b, s//4, c*2)
+
+        return x, None
     
+
 def create_block(
     d_model,
     ssm_cfg=None,
@@ -139,14 +159,26 @@ class MixerModel(nn.Module):
                     fused_add_norm=fused_add_norm,
                     layer_idx=i,
                     **factory_kwargs,
+                ) if i < 2 else
+                create_block(
+                    d_model*2 if i < 6 else d_model*4,
+                    ssm_cfg=ssm_cfg,
+                    norm_epsilon=norm_epsilon,
+                    rms_norm=rms_norm,
+                    residual_in_fp32=residual_in_fp32,
+                    fused_add_norm=fused_add_norm,
+                    layer_idx=i,
+                    **factory_kwargs,
                 )
                 for i in range(n_layer)
             ]
         )
 
-        self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
-            d_model, eps=norm_epsilon, **factory_kwargs
-        )
+        self.layers.insert(2, DownSample(d_model, d_model*2))
+        self.layers.insert(7, DownSample(d_model*2, d_model*4))
+        # self.norm_f = (nn.LayerNorm if not rms_norm else RMSNorm)(
+        #     d_model*2, eps=norm_epsilon, **factory_kwargs
+        # )
 
         self.apply(
             partial(
@@ -175,24 +207,27 @@ class MixerModel(nn.Module):
         hidden_states = input_patches
         residual = None
         for layer in self.layers:
+
             hidden_states, residual = layer(
                 hidden_states, residual, inference_params=inference_params
             )
-        if not self.fused_add_norm:
-            residual = (hidden_states + residual) if residual is not None else hidden_states
-            hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
-        else:
-            # Set prenorm=False here since we don't need the residual
-            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
-            hidden_states = fused_add_norm_fn(
-                hidden_states,
-                self.norm_f.weight,
-                self.norm_f.bias,
-                eps=self.norm_f.eps,
-                residual=residual,
-                prenorm=False,
-                residual_in_fp32=self.residual_in_fp32,
-            )
+        # if not self.fused_add_norm:
+        residual = (hidden_states + residual) if residual is not None else hidden_states
+        # hidden_states = self.norm_f(residual.to(dtype=self.norm_f.weight.dtype))
+        # hidden_states = residual.to(dtype=self.norm_f.weight.dtype)
+        hidden_states = residual
+        # else:
+        #     # Set prenorm=False here since we don't need the residual
+        #     fused_add_norm_fn = rms_norm_fn if isinstance(self.norm_f, RMSNorm) else layer_norm_fn
+        #     hidden_states = fused_add_norm_fn(
+        #         hidden_states,
+        #         self.norm_f.weight,
+        #         self.norm_f.bias,
+        #         eps=self.norm_f.eps,
+        #         residual=residual,
+        #         prenorm=False,
+        #         residual_in_fp32=self.residual_in_fp32,
+        #     )
         return hidden_states
 
 
@@ -217,7 +252,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
 
         super().__init__()
 
-        self.conv = nn.Conv2d(3, d_model, 2, 2, bias=False)
+        self.conv = nn.Conv2d(3, d_model, 3, 1, bias=False, padding=1)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -229,7 +264,8 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
             residual_in_fp32=residual_in_fp32,
             **factory_kwargs,
         )
-        self.lm_head = nn.Linear(d_model, vocab_size, bias=False, **factory_kwargs)
+        self.norm = RMSNorm(d_model*4)
+        self.lm_head = nn.Linear(d_model*4, vocab_size, bias=False, **factory_kwargs)
 
         # Initialize weights and apply final processing
         self.apply(
@@ -258,6 +294,7 @@ class MambaLMHeadModel(nn.Module, GenerationMixin):
             hidden_states = hidden_states.mean(1)
         else:
             raise NotImplementedError
+        hidden_states = self.norm(hidden_states)
         lm_logits = self.lm_head(hidden_states)
         return lm_logits
 
